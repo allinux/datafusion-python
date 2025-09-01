@@ -16,6 +16,9 @@
 // under the License.
 
 use std::sync::Arc;
+use std::time::Duration;
+
+use object_store::{ClientOptions, RetryConfig};
 
 use pyo3::prelude::*;
 
@@ -26,6 +29,99 @@ use object_store::http::{HttpBuilder, HttpStore};
 use object_store::local::LocalFileSystem;
 use pyo3::exceptions::PyValueError;
 use url::Url;
+
+#[pyclass(name = "RetryConfig", module = "datafusion.store", subclass)]
+#[derive(FromPyObject)]
+pub struct PyRetryConfig {
+    pub max_retries: usize,
+    pub retry_timeout: u64,
+}
+
+#[pymethods]
+impl PyRetryConfig {
+    #[new]
+    #[pyo3(signature = (max_retries=None, retry_timeout=None))]
+    fn py_new(max_retries: Option<usize>, retry_timeout: Option<u64>) -> Self {
+        let default_retry = RetryConfig::default();
+        Self {
+            max_retries: max_retries.unwrap_or(default_retry.max_retries),
+            retry_timeout: retry_timeout.unwrap_or(default_retry.retry_timeout.as_secs()),
+        }
+    }
+
+    #[getter]
+    fn get_max_retries(&self) -> usize {
+        self.max_retries
+    }
+
+    #[getter]
+    fn get_retry_timeout(&self) -> u64 {
+        self.retry_timeout
+    }
+}
+
+impl From<PyRetryConfig> for RetryConfig {
+    fn from(config: PyRetryConfig) -> Self {
+        RetryConfig{max_retries:config.max_retries, retry_timeout:Duration::from_secs(config.retry_timeout), ..Default::default()}
+    }
+}
+
+impl Default for PyRetryConfig {
+    fn default() -> Self {
+        let default_retry = RetryConfig::default();
+        Self {
+            max_retries: default_retry.max_retries,
+            retry_timeout: default_retry.retry_timeout.as_secs(),
+        }
+    }
+}
+
+#[pyclass(name = "ClientOptions", module = "datafusion.store", subclass)]
+#[derive(FromPyObject)]
+pub struct PyClientOptions {
+    pub connect_timeout: Duration,
+    pub timeout: Duration,
+}
+
+impl Default for PyClientOptions {
+    fn default() -> Self {
+        Self { 
+            connect_timeout: Duration::from_secs(30),
+            timeout: Duration::from_secs(5),
+        }
+    }   
+}
+
+#[pymethods]
+impl PyClientOptions {
+    #[new]
+    #[pyo3(signature = (connect_timeout=None, timeout=None))]
+    fn py_new(connect_timeout: Option<u64>, timeout: Option<u64>) -> Self {
+        let default_client_options = Self::default();
+        Self {
+            connect_timeout: connect_timeout.map_or(default_client_options.connect_timeout, Duration::from_secs),
+            timeout: timeout.map_or(default_client_options.timeout, Duration::from_secs),
+        }
+    }
+
+    #[getter]
+    fn get_connect_timeout(&self) -> Duration {
+        self.connect_timeout
+    }
+
+    #[getter]
+    fn get_timeout(&self) -> Duration {
+        self.timeout
+    }
+}
+
+impl From<PyClientOptions> for ClientOptions {
+    fn from(options: PyClientOptions) -> Self {
+        ClientOptions::new()
+            .with_connect_timeout(options.connect_timeout)
+            .with_timeout(options.timeout)
+    }
+}
 
 #[derive(FromPyObject)]
 pub enum StorageContexts {
@@ -174,7 +270,7 @@ pub struct PyAmazonS3Context {
 #[pymethods]
 impl PyAmazonS3Context {
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (bucket_name, region=None, access_key_id=None, secret_access_key=None, endpoint=None, allow_http=false, imdsv1_fallback=false))]
+    #[pyo3(signature = (bucket_name, region=None, access_key_id=None, secret_access_key=None, endpoint=None, retry_config=None, client_options=None, allow_http=false, imdsv1_fallback=false))]
     #[new]
     fn new(
         bucket_name: String,
@@ -182,7 +278,8 @@ impl PyAmazonS3Context {
         access_key_id: Option<String>,
         secret_access_key: Option<String>,
         endpoint: Option<String>,
-        //retry_config: RetryConfig,
+        retry_config: Option<PyRetryConfig>,
+        client_options: Option<PyClientOptions>,
         allow_http: bool,
         imdsv1_fallback: bool,
     ) -> Self {
@@ -211,7 +308,8 @@ impl PyAmazonS3Context {
 
         let store = builder
             .with_bucket_name(bucket_name.clone())
-            //.with_retry_config(retry_config) #TODO: add later
+            .with_retry(retry_config.map_or(RetryConfig::default(), RetryConfig::from))
+            .with_client_options(client_options.map_or(ClientOptions::default(), ClientOptions::from))
             .with_allow_http(allow_http)
             .build()
             .expect("failed to build AmazonS3");
@@ -255,5 +353,7 @@ pub(crate) fn init_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyGoogleCloudContext>()?;
     m.add_class::<PyLocalFileSystemContext>()?;
     m.add_class::<PyHttpContext>()?;
+    m.add_class::<PyRetryConfig>()?;
+    m.add_class::<PyClientOptions>()?;
     Ok(())
 }

@@ -61,5 +61,5 @@ name = "datafusion_python"
 crate-type = ["cdylib", "rlib"]
 
 [profile.release]
-lto = true
-codegen-units = 1
+lto = "thin"
+#codegen-units = 1

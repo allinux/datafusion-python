@@ -24,4 +24,7 @@ LocalFileSystem = object_store.LocalFileSystem
 MicrosoftAzure = object_store.MicrosoftAzure
 Http = object_store.Http
 
-__all__ = ["AmazonS3", "GoogleCloud", "Http", "LocalFileSystem", "MicrosoftAzure"]
+RetryConfig = object_store.RetryConfig
+ClientOptions = object_store.ClientOptions
+
+__all__ = ["AmazonS3", "GoogleCloud", "Http", "LocalFileSystem", "MicrosoftAzure", "RetryConfig", "ClientOptions"]

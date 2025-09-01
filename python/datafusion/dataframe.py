@@ -26,6 +26,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Iterable,
+    List,
     Literal,
     Optional,
     Union,
@@ -56,6 +57,7 @@ if TYPE_CHECKING:
 
 from enum import Enum
 
+from datafusion._internal import InsertOp
 
 # excerpt from deltalake
 # https://github.com/apache/datafusion-python/pull/981#discussion_r1905619163
@@ -875,6 +877,7 @@ class DataFrame:
         """
         return DataFrame(self.df.except_all(other.df))
 
+    @overload
     def write_csv(self, path: str | pathlib.Path, with_header: bool = False) -> None:
         """Execute the :py:class:`DataFrame`  and write the results to a CSV file.
 
@@ -883,6 +886,19 @@ class DataFrame:
             with_header: If true, output the CSV header row.
         """
         self.df.write_csv(str(path), with_header)
+        
+    @overload
+    def write_csv(self, path: str | pathlib.Path, with_header: bool = False, insert_operation: InsertOp = InsertOp.Append, single_file_output: bool = False, partition_by: Optional[List[str]] = None,) -> None:
+        """Execute the :py:class:`DataFrame`  and write the results to a CSV file.
+
+        Args:
+            path: Path of the CSV file to write.
+            with_header: If true, output the CSV header row.
+            insert_operation: The operation to perform on the CSV file(Append, Overwrite, Replace).
+            single_file_output: If true, write the CSV file as a single file.
+            partition_by: The columns to partition the CSV file by.
+        """
+        self.df.write_csv(str(path), with_header, insert_operation, single_file_output, partition_by or [])
 
     @overload
     def write_parquet(
@@ -911,8 +927,11 @@ class DataFrame:
     def write_parquet(
         self,
         path: str | pathlib.Path,
-        compression: Union[str, Compression, ParquetWriterOptions] = Compression.ZSTD,
+        compression: Union[str, Compression] = Compression.ZSTD,
         compression_level: int | None = None,
+        insert_operation: InsertOp = InsertOp.Append,
+        single_file_output: bool = False,
+        partition_by: Optional[List[str]] = None,
     ) -> None:
         """Execute the :py:class:`DataFrame` and write the results to a Parquet file.
 
@@ -931,12 +950,16 @@ class DataFrame:
             compression_level: Compression level to use. For ZSTD, the
                 recommended range is 1 to 22, with the default being 4. Higher levels
                 provide better compression but slower speed.
+            insert_operation: The operation to perform on the Parquet file(Append, Overwrite, Replace).
+            single_file_output: If true, write the Parquet file as a single file.
+            partition_by: The columns to partition the Parquet file by.
         """
+
         if isinstance(compression, ParquetWriterOptions):
             if compression_level is not None:
                 msg = "compression_level should be None when using ParquetWriterOptions"
                 raise ValueError(msg)
-            self.write_parquet_with_options(path, compression)
+            self.write_parquet_with_options(path, compression, insert_operation, single_file_output, partition_by or [])
             return
 
         if isinstance(compression, str):
@@ -948,10 +971,14 @@ class DataFrame:
         ):
             compression_level = compression.get_default_level()
 
-        self.df.write_parquet(str(path), compression.value, compression_level)
+        self.df.write_parquet(str(path), compression.value, compression_level, insert_operation, single_file_output, partition_by or [])
 
     def write_parquet_with_options(
-        self, path: str | pathlib.Path, options: ParquetWriterOptions
+        self, path: str | pathlib.Path, 
+        options: ParquetWriterOptions, 
+        insert_operation: InsertOp = InsertOp.Append,
+        single_file_output: bool = False,
+        partition_by: Optional[List[str]] = None,
     ) -> None:
         """Execute the :py:class:`DataFrame` and write the results to a Parquet file.
 
@@ -1000,15 +1027,21 @@ class DataFrame:
             str(path),
             options_internal,
             column_specific_options_internal,
+            insert_operation,
+            single_file_output,
+            partition_by,
         )
 
-    def write_json(self, path: str | pathlib.Path) -> None:
+    def write_json(self, path: str | pathlib.Path, insert_operation: InsertOp = InsertOp.Append, single_file_output: bool = False, partition_by: Optional[List[str]] = None) -> None:
         """Execute the :py:class:`DataFrame` and write the results to a JSON file.
 
         Args:
             path: Path of the JSON file to write.
+            insert_operation: The operation to perform on the JSON file(Append, Overwrite, Replace).
+            single_file_output: If true, write the JSON file as a single file.
+            partition_by: The columns to partition the JSON file by.
         """
-        self.df.write_json(str(path))
+        self.df.write_json(str(path), insert_operation, single_file_output, partition_by or [])
 
     def to_arrow_table(self) -> pa.Table:
         """Execute the :py:class:`DataFrame` and convert it into an Arrow Table.

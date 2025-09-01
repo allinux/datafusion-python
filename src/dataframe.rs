@@ -34,6 +34,7 @@ use datafusion::dataframe::{DataFrame, DataFrameWriteOptions};
 use datafusion::datasource::TableProvider;
 use datafusion::error::DataFusionError;
 use datafusion::execution::SendableRecordBatchStream;
+use datafusion::logical_expr::dml::InsertOp;
 use datafusion::parquet::basic::{BrotliLevel, Compression, GzipLevel, ZstdLevel};
 use datafusion::prelude::*;
 use datafusion_ffi::table_provider::FFI_TableProvider;
@@ -57,6 +58,27 @@ use crate::{
     errors::PyDataFusionResult,
     expr::{sort_expr::PySortExpr, PyExpr},
 };
+
+#[derive(Clone, Copy, PartialEq)]
+#[pyclass(name = "InsertOp", module = "datafusion", eq, eq_int)]
+pub enum PyInsertOp {
+    #[pyo3(name = "Append")]
+    Append,
+    #[pyo3(name = "Overwrite")]
+    Overwrite,
+    #[pyo3(name = "Replace")]
+    Replace,
+}
+
+impl From<PyInsertOp> for InsertOp {
+    fn from(op: PyInsertOp) -> Self {
+        match op {
+            PyInsertOp::Append => InsertOp::Append,
+            PyInsertOp::Overwrite => InsertOp::Overwrite,
+            PyInsertOp::Replace => InsertOp::Replace,
+        }
+    }
+}
 
 // https://github.com/apache/datafusion-python/pull/1016#discussion_r1983239116
 // - we have not decided on the table_provider approach yet
@@ -743,19 +765,22 @@ impl PyDataFrame {
     }
 
     /// Write a `DataFrame` to a CSV file.
-    fn write_csv(&self, path: &str, with_header: bool, py: Python) -> PyDataFusionResult<()> {
+    fn write_csv(&self, path: &str, with_header: bool, insert_operation: PyInsertOp, single_file_output: bool, partition_by: Vec<String>, py: Python) -> PyDataFusionResult<()> {
         let csv_options = CsvOptions {
             has_header: Some(with_header),
             ..Default::default()
         };
-        wait_for_future(
+        let _ = wait_for_future(
             py,
             self.df.as_ref().clone().write_csv(
                 path,
-                DataFrameWriteOptions::new(),
+                DataFrameWriteOptions::new()
+                    .with_insert_operation(insert_operation.into())
+                    .with_single_file_output(single_file_output)
+                    .with_partition_by(partition_by),
                 Some(csv_options),
             ),
-        )??;
+        )?;
         Ok(())
     }
 
@@ -763,13 +788,19 @@ impl PyDataFrame {
     #[pyo3(signature = (
         path,
         compression="zstd",
-        compression_level=None
+        compression_level=None,
+        insert_operation=PyInsertOp::Append,
+        single_file_output=false,
+        partition_by=vec![],
         ))]
     fn write_parquet(
         &self,
         path: &str,
         compression: &str,
         compression_level: Option<u32>,
+        insert_operation: PyInsertOp,
+        single_file_output: bool,
+        partition_by: Vec<String>,
         py: Python,
     ) -> PyDataFusionResult<()> {
         fn verify_compression_level(cl: Option<u32>) -> Result<u32, PyErr> {
@@ -813,7 +844,10 @@ impl PyDataFrame {
             py,
             self.df.as_ref().clone().write_parquet(
                 path,
-                DataFrameWriteOptions::new(),
+                DataFrameWriteOptions::new()
+                    .with_insert_operation(insert_operation.into())
+                    .with_single_file_output(single_file_output)
+                    .with_partition_by(partition_by),
                 Option::from(options),
             ),
         )??;
@@ -821,11 +855,22 @@ impl PyDataFrame {
     }
 
     /// Write a `DataFrame` to a Parquet file, using advanced options.
+    #[pyo3(signature = (
+        path,
+        options,
+        column_specific_options,
+        insert_operation=PyInsertOp::Append,
+        single_file_output=false,
+        partition_by=vec![],
+    ))]
     fn write_parquet_with_options(
         &self,
         path: &str,
         options: PyParquetWriterOptions,
         column_specific_options: HashMap<String, PyParquetColumnOptions>,
+        insert_operation: PyInsertOp,
+        single_file_output: bool,
+        partition_by: Vec<String>,
         py: Python,
     ) -> PyDataFusionResult<()> {
         let table_options = TableParquetOptions {
@@ -841,7 +886,10 @@ impl PyDataFrame {
             py,
             self.df.as_ref().clone().write_parquet(
                 path,
-                DataFrameWriteOptions::new(),
+                DataFrameWriteOptions::new()
+                    .with_insert_operation(insert_operation.into())
+                    .with_single_file_output(single_file_output)
+                    .with_partition_by(partition_by),
                 Option::from(table_options),
             ),
         )??;
@@ -849,14 +897,18 @@ impl PyDataFrame {
     }
 
     /// Executes a query and writes the results to a partitioned JSON file.
-    fn write_json(&self, path: &str, py: Python) -> PyDataFusionResult<()> {
-        wait_for_future(
+    fn write_json(&self, path: &str, insert_operation: PyInsertOp, single_file_output: bool, partition_by: Vec<String>, py: Python) -> PyDataFusionResult<()> {
+        let _ = wait_for_future(
             py,
             self.df
                 .as_ref()
                 .clone()
-                .write_json(path, DataFrameWriteOptions::new(), None),
-        )??;
+                .write_json(path, DataFrameWriteOptions::new()
+                    .with_insert_operation(insert_operation.into())
+                    .with_single_file_output(single_file_output)
+                    .with_partition_by(partition_by),
+                None),
+        )?;
         Ok(())
     }
 
